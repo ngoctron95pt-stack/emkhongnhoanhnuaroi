@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>_lpt_</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@100;200;300&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: radial-gradient(circle at center, #1b1625 0%, #08060c 100%);
+            font-family: 'Montserrat', sans-serif;
+        }
+
+        .title-header {
+            position: absolute;
+            top: 6vh;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            color: rgba(255, 255, 255, 0.85);
+            font-weight: 100;
+            font-size: 2rem;
+            letter-spacing: 6px;
+            pointer-events: none;
+            text-shadow: 0 0 12px rgba(255, 255, 255, 0.4), 0 0 25px rgba(255, 192, 203, 0.3);
+            transition: color 1s ease, text-shadow 1s ease;
+        }
+
+        #webgl-canvas {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            cursor: pointer;
+        }
+
+        .status-hint {
+            position: absolute;
+            bottom: 4vh;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.5);
+            font-weight: 200;
+            font-size: 0.85rem;
+            letter-spacing: 2px;
+            pointer-events: none;
+            text-transform: uppercase;
+            animation: pulseHint 2.5s infinite ease-in-out;
+        }
+
+        @keyframes pulseHint {
+            0%, 100% { opacity: 0.3; transform: translateX(-50%) scale(0.98); }
+            50% { opacity: 0.8; transform: translateX(-50%) scale(1.02); }
+        }
+    </style>
+</head>
+<body>
+
+    <h1 class="title-header" id="app-title">_lpt_</h1>
+    <div class="status-hint" id="status-text">Click để tụm thành Trái Tim</div>
+    <canvas id="webgl-canvas"></canvas>
+
+    <script>
+        // Color palettes (0: White, 1: Pastel Pink, 2: Pastel Yellow, 3: Pastel Yellow & White mix)
+        const COLOR_PALETTES = [
+            { name: "White Pure", colors: [0xffffff, 0xf0f5ff, 0xe8f0fe] },
+            { name: "Pastel Pink", colors: [0xffc0cb, 0xffb6c1, 0xffdae0] },
+            { name: "Pastel Yellow", colors: [0xfff9c4, 0xfff176, 0xfff59d] },
+            { name: "Yellow & White Mix", colors: [0xffffff, 0xfff9c4, 0xfff176, 0xfafafa] }
+        ];
+
+        // Interaction States: 0: Floating, 1: Heart, 2: I LOVE YOU
+        let currentState = 0;
+        let colorState = 0;
+
+        const PETAL_COUNT = 3200;
+        const SPARKLE_COUNT = 400;
+
+        let scene, camera, renderer, petalsGeometry, petalsMesh, sparklesGeometry, sparklesMesh;
+        let petalPositions = [], targetPositions = [];
+        let petalRotations = [], targetRotations = [];
+        let petalColors = [];
+        let petalScales = [];
+        let petalVelocities = [];
+
+        // Smooth Mouse Rotation Variables
+        let mouseX = 0, mouseY = 0;
+        let targetRotationX = 0, targetRotationY = 0;
+        let currentRotationX = 0, currentRotationY = 0;
+
+        // Generate positions for 3D Heart Shape
+        function getHeartPoint(t, u) {
+            // Parametric 3D Heart equation
+            t = t * Math.PI * 2;
+            u = (u - 0.5) * Math.PI;
+            
+            const x = 16 * Math.pow(Math.sin(t), 3);
+            const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+            const z = u * 4;
+
+            const scale = 0.22;
+            return {
+                x: x * scale,
+                y: y * scale + 0.5,
+                z: z * scale
+            };
+        }
+
+        // Generate points for "i love you" text using offscreen Canvas sampling
+        function getILoveYouPoints(count) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 600;
+            canvas.height = 150;
+
+            ctx.fillStyle = "#000000";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 70px Montserrat, sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("i love you", canvas.width / 2, canvas.height / 2);
+
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imgData.data;
+            const validPoints = [];
+
+            for (let y = 0; y < canvas.height; y += 2) {
+                for (let x = 0; x < canvas.width; x += 2) {
+                    const index = (y * canvas.width + x) * 4;
+                    if (data[index] > 128) { // White pixel threshold
+                        validPoints.push({
+                            x: (x - canvas.width / 2) * 0.024,
+                            y: -(y - canvas.height / 2) * 0.024,
+                            z: (Math.random() - 0.5) * 0.4
+                        });
+                    }
+                }
+            }
+
+            // Fill or sample to match PETAL_COUNT exactly
+            const points = [];
+            for (let i = 0; i < count; i++) {
+                const pt = validPoints[i % validPoints.length];
+                points.push({
+                    x: pt.x + (Math.random() - 0.5) * 0.08,
+                    y: pt.y + (Math.random() - 0.5) * 0.08,
+                    z: pt.z + (Math.random() - 0.5) * 0.3
+                });
+            }
+            return points;
+        }
+
+        // Create custom soft smooth petal texture procedurally
+        function createPetalTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+
+            ctx.clearRect(0, 0, 128, 128);
+
+            // Draw organic smooth petal shape
+            ctx.beginPath();
+            ctx.moveTo(64, 120);
+            ctx.bezierCurveTo(15, 80, 10, 30, 64, 10);
+            ctx.bezierCurveTo(118, 30, 113, 80, 64, 120);
+            ctx.closePath();
+
+            const gradient = ctx.createRadialGradient(64, 50, 5, 64, 64, 60);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.85)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // Create glowing sparkle particle texture (blink blink)
+        function createSparkleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(0.3, 'rgba(255, 240, 250, 0.8)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(32, 32, 30, 0, Math.PI * 2);
+            ctx.fill();
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        let heartPointsCache = [];
+        let textPointsCache = [];
+
+        function initScene() {
+            const container = document.getElementById('webgl-canvas');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x08060c, 0.035);
+
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 12;
+
+            renderer = new THREE.WebGLRenderer({ canvas: container, antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+            // Generate cache for morph targets
+            for (let i = 0; i < PETAL_COUNT; i++) {
+                heartPointsCache.push(getHeartPoint(i / PETAL_COUNT, Math.random()));
+            }
+            textPointsCache = getILoveYouPoints(PETAL_COUNT);
+
+            // Build Petals Geometry
+            const petalTexture = createPetalTexture();
+            petalsGeometry = new THREE.BufferGeometry();
+
+            const posArray = new Float32Array(PETAL_COUNT * 3);
+            targetPositions = new Float32Array(PETAL_COUNT * 3);
+            const colorArray = new Float32Array(PETAL_COUNT * 3);
+            const scaleArray = new Float32Array(PETAL_COUNT);
+            const rotArray = new Float32Array(PETAL_COUNT * 3);
+
+            const initialPalette = COLOR_PALETTES[0].colors;
+
+            for (let i = 0; i < PETAL_COUNT; i++) {
+                // Initial floating positions
+                const x = (Math.random() - 0.5) * 16;
+                const y = (Math.random() - 0.5) * 12;
+                const z = (Math.random() - 0.5) * 12;
+
+                posArray[i * 3] = x;
+                posArray[i * 3 + 1] = y;
+                posArray[i * 3 + 2] = z;
+
+                targetPositions[i * 3] = x;
+                targetPositions[i * 3 + 1] = y;
+                targetPositions[i * 3 + 2] = z;
+
+                // Random velocities for continuous soft floating
+                petalVelocities.push({
+                    x: (Math.random() - 0.5) * 0.005,
+                    y: (Math.random() - 0.5) * 0.005 - 0.002,
+                    z: (Math.random() - 0.5) * 0.005,
+                    rotX: (Math.random() - 0.5) * 0.02,
+                    rotY: (Math.random() - 0.5) * 0.02
+                });
+
+                // Set initial colors
+                const c = new THREE.Color(initialPalette[i % initialPalette.length]);
+                colorArray[i * 3] = c.r;
+                colorArray[i * 3 + 1] = c.g;
+                colorArray[i * 3 + 2] = c.b;
+
+                scaleArray[i] = Math.random() * 0.22 + 0.12;
+
+                rotArray[i * 3] = Math.random() * Math.PI;
+                rotArray[i * 3 + 1] = Math.random() * Math.PI;
+                rotArray[i * 3 + 2] = Math.random() * Math.PI;
+            }
+
+            petalsGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            petalsGeometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+            petalsGeometry.setAttribute('size', new THREE.BufferAttribute(scaleArray, 1));
+            petalsGeometry.setAttribute('rotation', new THREE.BufferAttribute(rotArray, 3));
+
+            // Custom Shader Material for realistic petal rotation & scale handling
+            const petalsMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTexture: { value: petalTexture },
+                    uTime: { value: 0 }
+                },
+                vertexShader: `
+                    attribute float size;
+                    attribute vec3 color;
+                    attribute vec3 rotation;
+                    varying vec3 vColor;
+                    varying vec3 vRotation;
+                    uniform float uTime;
+
+                    void main() {
+                        vColor = color;
+                        vRotation = rotation;
+                        
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        gl_PointSize = size * (220.0 / -mvPosition.z);
+                        gl_Position = projectionMatrix * mvPosition;
+                    }
+                `,
+                fragmentShader: `
+                    uniform sampler2D uTexture;
+                    varying vec3 vColor;
+                    varying vec3 vRotation;
+
+                    void main() {
+                        // Rotate petal point coordinate
+                        float mid = 0.5;
+                        float cosA = cos(vRotation.z);
+                        float sinA = sin(vRotation.z);
+                        vec2 rotated = vec2(
+                            cosA * (gl_PointCoord.x - mid) + sinA * (gl_PointCoord.y - mid) + mid,
+                            -sinA * (gl_PointCoord.x - mid) + cosA * (gl_PointCoord.y - mid) + mid
+                        );
+
+                        vec4 texColor = texture2D(uTexture, rotated);
+                        if (texColor.a < 0.05) discard;
+
+                        gl_FragColor = vec4(vColor, texColor.a * 0.85);
+                    }
+                `,
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+
+            petalsMesh = new THREE.Points(petalsGeometry, petalsMaterial);
+            scene.add(petalsMesh);
+
+            sparklesGeometry = new THREE.BufferGeometry();
+            const sparklePositions = new Float32Array(SPARKLE_COUNT * 3);
+            const sparkleSizes = new Float32Array(SPARKLE_COUNT);
+
+            for (let i = 0; i < SPARKLE_COUNT; i++) {
+                sparklePositions[i * 3] = (Math.random() - 0.5) * 22;
+                sparklePositions[i * 3 + 1] = (Math.random() - 0.5) * 18;
+                sparklePositions[i * 3 + 2] = (Math.random() - 0.5) * 18;
+                sparkleSizes[i] = Math.random() * 0.15 + 0.05;
+            }
+
+            sparklesGeometry.setAttribute('position', new THREE.BufferAttribute(sparklePositions, 3));
+            sparklesGeometry.setAttribute('size', new THREE.BufferAttribute(sparkleSizes, 1));
+
+            const sparklesMaterial = new THREE.PointsMaterial({
+                size: 0.18,
+                map: createSparkleTexture(),
+                transparent: true,
+                opacity: 0.7,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            sparklesMesh = new THREE.Points(sparklesGeometry, sparklesMaterial);
+            scene.add(sparklesMesh);
+        }
+
+        function updateMorphTargets() {
+            const positions = petalsGeometry.attributes.position.array;
+
+            if (currentState === 0) {
+                // Free gentle floating state
+                for (let i = 0; i < PETAL_COUNT; i++) {
+                    targetPositions[i * 3] = (Math.random() - 0.5) * 16;
+                    targetPositions[i * 3 + 1] = (Math.random() - 0.5) * 12;
+                    targetPositions[i * 3 + 2] = (Math.random() - 0.5) * 12;
+                }
+                document.getElementById('status-text').innerText = "Click để tụm thành Trái Tim";
+            } else if (currentState === 1) {
+                // Morph to Heart
+                for (let i = 0; i < PETAL_COUNT; i++) {
+                    const pt = heartPointsCache[i];
+                    targetPositions[i * 3] = pt.x;
+                    targetPositions[i * 3 + 1] = pt.y;
+                    targetPositions[i * 3 + 2] = pt.z;
+                }
+                document.getElementById('status-text').innerText = "Click để hiện chữ 'i love you'";
+            } else if (currentState === 2) {
+                // Morph to I LOVE YOU text
+                for (let i = 0; i < PETAL_COUNT; i++) {
+                    const pt = textPointsCache[i];
+                    targetPositions[i * 3] = pt.x;
+                    targetPositions[i * 3 + 1] = pt.y;
+                    targetPositions[i * 3 + 2] = pt.z;
+                }
+                document.getElementById('status-text').innerText = "Click để giải phóng cánh hoa";
+            }
+        }
+
+        function updateColors() {
+            const colors = petalsGeometry.attributes.color.array;
+            const targetPalette = COLOR_PALETTES[colorState].colors;
+
+            for (let i = 0; i < PETAL_COUNT; i++) {
+                const hex = targetPalette[i % targetPalette.length];
+                const c = new THREE.Color(hex);
+
+                // Smoothly store target color blending
+                colors[i * 3] = c.r;
+                colors[i * 3 + 1] = c.g;
+                colors[i * 3 + 2] = c.b;
+            }
+            petalsGeometry.attributes.color.needsUpdate = true;
+
+            // Subtle glow color updates on title text matching color scheme
+            const title = document.getElementById('app-title');
+            if (colorState === 0) {
+                title.style.color = "rgba(255, 255, 255, 0.9)";
+                title.style.textShadow = "0 0 15px rgba(255, 255, 255, 0.6)";
+            } else if (colorState === 1) {
+                title.style.color = "rgba(255, 192, 203, 0.95)";
+                title.style.textShadow = "0 0 18px rgba(255, 182, 193, 0.7)";
+            } else if (colorState === 2) {
+                title.style.color = "rgba(255, 249, 196, 0.95)";
+                title.style.textShadow = "0 0 18px rgba(255, 241, 118, 0.7)";
+            } else {
+                title.style.color = "rgba(255, 250, 220, 0.95)";
+                title.style.textShadow = "0 0 18px rgba(255, 255, 255, 0.8)";
+            }
+        }
+
+        function onPointerMove(event) {
+            // Smooth 360-degree rotation view without needing to hold mouse click
+            mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            targetRotationY = mouseX * Math.PI * 0.8; // Smooth yaw
+            targetRotationX = mouseY * Math.PI * 0.35; // Smooth pitch
+        }
+
+        function onCanvasClick() {
+            // Cycle through shape states (0 -> 1 -> 2 -> 0)
+            currentState = (currentState + 1) % 3;
+            // Cycle through color palettes (White -> Pink -> Yellow -> Yellow-White Mix -> repeat)
+            colorState = (colorState + 1) % COLOR_PALETTES.length;
+
+            updateMorphTargets();
+            updateColors();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        let clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const elapsedTime = clock.getElapsedTime();
+            const pos = petalsGeometry.attributes.position.array;
+            const rot = petalsGeometry.attributes.rotation.array;
+
+            // Interpolate positions softly towards target shape positions
+            const lerpFactor = currentState === 0 ? 0.025 : 0.045;
+
+            for (let i = 0; i < PETAL_COUNT; i++) {
+                const idx = i * 3;
+
+                // Add gentle floating motion offset
+                const floatOffset = Math.sin(elapsedTime * 1.8 + i) * 0.008;
+
+                pos[idx] += (targetPositions[idx] - pos[idx]) * lerpFactor;
+                pos[idx + 1] += (targetPositions[idx + 1] - pos[idx + 1]) * lerpFactor + floatOffset;
+                pos[idx + 2] += (targetPositions[idx + 2] - pos[idx + 2]) * lerpFactor;
+
+                // Rotate petals naturally
+                rot[idx + 2] += petalVelocities[i].rotX;
+
+                // Gentle drift when in free floating mode
+                if (currentState === 0) {
+                    targetPositions[idx] += petalVelocities[i].x;
+                    targetPositions[idx + 1] += petalVelocities[i].y;
+                    targetPositions[idx + 2] += petalVelocities[i].z;
+
+                    // Wrap around space boundaries
+                    if (Math.abs(targetPositions[idx]) > 10) targetPositions[idx] *= -0.9;
+                    if (Math.abs(targetPositions[idx + 1]) > 8) targetPositions[idx + 1] *= -0.9;
+                }
+            }
+
+            petalsGeometry.attributes.position.needsUpdate = true;
+            petalsGeometry.attributes.rotation.needsUpdate = true;
+
+            // Sparkle blink animation
+            const sparklesPos = sparklesGeometry.attributes.position.array;
+            for (let i = 0; i < SPARKLE_COUNT; i++) {
+                sparklesPos[i * 3 + 1] += Math.sin(elapsedTime * 2 + i) * 0.003;
+            }
+            sparklesGeometry.attributes.position.needsUpdate = true;
+            sparklesMesh.rotation.y = elapsedTime * 0.03;
+
+            // Smooth 360-degree camera rotation based on mouse hover
+            currentRotationX += (targetRotationX - currentRotationX) * 0.05;
+            currentRotationY += (targetRotationY - currentRotationY) * 0.05;
+
+            scene.rotation.y = currentRotationY;
+            scene.rotation.x = currentRotationX;
+
+            renderer.render(scene, camera);
+        }
+
+        window.onload = function() {
+            initScene();
+
+            // Set up interaction listeners
+            window.addEventListener('mousemove', onPointerMove, false);
+            window.addEventListener('click', onCanvasClick, false);
+            window.addEventListener('resize', onWindowResize, false);
+
+            // Support touch screen devices without hold drag
+            window.addEventListener('touchmove', (e) => {
+                if (e.touches.length > 0) {
+                    onPointerMove(e.touches[0]);
+                }
+            }, false);
+
+            // Start smooth rendering loop
+            animate();
+        };
+    </script>
+</body>
+</html>
